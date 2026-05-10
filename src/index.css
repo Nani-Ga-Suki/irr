@@ -12,17 +12,17 @@
   --color-border: rgba(255, 255, 255, 0.06);
   --color-border-strong: rgba(255, 255, 255, 0.12);
   --color-border-divider: rgba(255, 255, 255, 0.06);
-  
+
   --color-text-primary: #e8e4dc;
   --color-text-secondary: #9a958d;
   --color-text-tertiary: #6b665e;
   --color-text-disabled: #3d3a36;
-  
+
   --color-accent-teal: #5bb8b2;
   --color-accent-brown: #c4884a;
   --color-accent-brick: #d46b67;
   --color-accent-moss: #6aad7a;
-  
+
   --font-display: 'Playfair Display', 'Georgia', serif;
   --font-body: 'Inter', -apple-system, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
@@ -54,12 +54,12 @@
   --color-border: rgba(255, 255, 255, 0.05);
   --color-border-strong: rgba(255, 255, 255, 0.10);
   --color-border-divider: rgba(255, 255, 255, 0.05);
-  
+
   --color-text-primary: #d4d4d4;
   --color-text-secondary: #8a8580;
   --color-text-tertiary: #5a5550;
   --color-text-disabled: #2a2725;
-  
+
   --color-accent-teal: #d4a054;
   --color-accent-brown: #c4884a;
   --color-accent-brick: #d46b67;
@@ -87,12 +87,12 @@
   --color-border: rgba(0, 0, 0, 0.06);
   --color-border-strong: rgba(0, 0, 0, 0.12);
   --color-border-divider: rgba(0, 0, 0, 0.08);
-  
+
   --color-text-primary: #1a1410;
   --color-text-secondary: #6b635a;
   --color-text-tertiary: #9a938a;
   --color-text-disabled: #c8c2b8;
-  
+
   --color-accent-teal: #a0620a;
   --color-accent-brown: #8a5210;
   --color-accent-brick: #c04540;
@@ -139,6 +139,22 @@ body::before {
   z-index: 9999;
   opacity: 0.03;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.001;
+  background-color: var(--glass-nav-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+  transform: translateZ(0);
 }
 
 [data-theme="amoled"] body::before {
@@ -367,6 +383,41 @@ input:focus {
   animation: pillHeaderIn 0.22s cubic-bezier(0.25, 0.1, 0.25, 1) both;
 }
 
+.definition-sticky-header {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.definition-sticky-header .glass-word-header::before {
+  opacity: 0.001;
+  will-change: opacity, backdrop-filter;
+}
+
+.definition-sticky-header .glass-word-header {
+  animation: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.definition-sticky-header .glass-word-header > * {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.definition-sticky-header.is-visible .glass-word-header::before,
+.definition-sticky-header.is-visible .glass-word-header > * {
+  opacity: 1;
+}
+
+.definition-sticky-header.is-visible .glass-word-header > * {
+  transform: translateY(0);
+}
+
+.definition-sticky-header.is-hidden .glass-word-header {
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .glass-word-header::before {
   content: '';
   position: absolute;
@@ -376,6 +427,7 @@ input:focus {
   background-color: var(--glass-nav-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
   backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+  transform: translateZ(0);
 }
 
 .glass-word-header > * {
@@ -397,6 +449,7 @@ input:focus {
 /* Bottom navigation bar — strong blur */
 .glass-nav {
   background-color: var(--glass-nav-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
   backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
   border-top: 1px solid var(--glass-border);
   transition: background-color 0.35s ease;

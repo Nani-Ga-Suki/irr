@@ -30,6 +30,7 @@ export function BottomNav({ store }: BottomNavProps) {
           return (
             <button
               key={view}
+              type="button"
               onClick={() => {
                 if (view === 'home') {
                   store.setView('home');
