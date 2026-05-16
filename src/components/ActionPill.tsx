@@ -28,7 +28,6 @@ export function ActionPill({ store }: ActionPillProps) {
     const shareData = {
       title: word,
       text: `${word}: ${currentEntry.meanings[0]?.definitions[0]?.definition || ''}`,
-      url: `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`,
     };
 
     try {

@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { Store } from '../hooks/storeTypes';
 import type { ThemeMode } from '../hooks/useStore';
-import { PlusIcon, TrashIcon, FileIcon, ToggleOnIcon, ToggleOffIcon, SunIcon, MoonIcon, DropIcon } from './Icons';
+import { PlusIcon, TrashIcon, FileIcon, CheckCircleIcon, SunIcon, MoonIcon, DropIcon } from './Icons';
 
 interface SettingsViewProps {
   store: Store;
@@ -29,7 +29,16 @@ const THEME_OPTIONS: { key: ThemeMode; label: string; Icon: typeof SunIcon; prev
 ];
 
 export function SettingsView({ store }: SettingsViewProps) {
-  const { dictionaries, importDictionary, toggleDictionary, removeDictionary, theme, setTheme, fontSize, setFontSize } = store;
+  const {
+    sqliteDictionary,
+    sqliteLoading,
+    importSQLiteDictionary,
+    removeSQLiteDictionary,
+    theme,
+    setTheme,
+    fontSize,
+    setFontSize,
+  } = store;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -37,18 +46,14 @@ export function SettingsView({ store }: SettingsViewProps) {
     if (!file) return;
 
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      if (typeof data === 'object' && data !== null) {
-        importDictionary(file.name, data);
-      }
+      await importSQLiteDictionary(file);
     } catch (err) {
-      alert('Failed to parse dictionary file. Please ensure it\'s valid JSON.');
+      const message = err instanceof Error ? err.message : 'Failed to import SQLite dictionary database.';
+      alert(message);
     }
 
-    // Reset input
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [importDictionary]);
+  }, [importSQLiteDictionary]);
 
   return (
     <div className="pb-28 min-h-screen">
@@ -57,11 +62,10 @@ export function SettingsView({ store }: SettingsViewProps) {
           Settings
         </h1>
         <p className="font-mono text-[0.6875rem] text-text-tertiary tracking-[0.04em] mt-1">
-          Manage dictionaries & preferences
+          Manage dictionary database & preferences
         </p>
       </div>
 
-      {/* ═══ Theme Section ═══ */}
       <div className="px-6 mt-8 max-w-[680px] mx-auto">
         <h3 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-4 font-body font-medium">
           Theme
@@ -101,7 +105,6 @@ export function SettingsView({ store }: SettingsViewProps) {
         </div>
       </div>
 
-      {/* ═══ Font Size Section ═══ */}
       <div className="px-6 mt-10 max-w-[680px] mx-auto">
         <h3 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-4 font-body font-medium">
           Font Size
@@ -125,110 +128,82 @@ export function SettingsView({ store }: SettingsViewProps) {
             className="mt-4 text-text-secondary leading-relaxed border-t border-border-divider pt-4"
             style={{ fontSize: `${fontSize}px` }}
           >
-            Preview text at {fontSize}px — The quick brown fox jumps over the lazy dog.
+            Preview text at {fontSize}px - The quick brown fox jumps over the lazy dog.
           </p>
         </div>
       </div>
 
-      {/* ═══ Dictionaries Section ═══ */}
       <div className="px-6 mt-10 max-w-[680px] mx-auto">
         <h3 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-4 font-body font-medium">
-          Custom Dictionaries
+          Dictionary Database
         </h3>
 
-        {dictionaries.length > 0 && (
+        {sqliteDictionary && (
           <div className="space-y-3 mb-4">
-            {dictionaries.map((dict, i) => (
-              <div
-                key={dict.id}
-                className="list-item-enter bg-elevated p-4 rounded-[15px] border border-border-divider flex items-center gap-4"
-                style={{ animationDelay: `${i * 0.04}s` }}
-              >
-                <FileIcon size={20} className="text-text-tertiary flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-display text-base text-text-primary truncate">{dict.name}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="font-mono text-[0.6875rem] text-text-tertiary tracking-[0.04em]">
-                      {dict.entryCount.toLocaleString()} entries
-                    </span>
-                    <span className="inline-block px-1.5 py-0 text-[0.625rem] uppercase tracking-[0.08em] font-mono bg-card-hover text-text-secondary rounded-[6px]">
-                      {dict.language}
-                    </span>
-                  </div>
+            <div className="list-item-enter bg-elevated p-4 rounded-[15px] border border-border-divider flex items-center gap-4">
+              <FileIcon size={20} className="text-text-tertiary flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="font-display text-base text-text-primary truncate">{sqliteDictionary.name}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="font-mono text-[0.6875rem] text-text-tertiary tracking-[0.04em]">
+                    {sqliteDictionary.entryCount.toLocaleString()} words
+                  </span>
+                  <span className="inline-block px-1.5 py-0 text-[0.625rem] uppercase tracking-[0.08em] font-mono bg-card-hover text-text-secondary rounded-[6px]">
+                    SQLite
+                  </span>
                 </div>
-                <button
-                  onClick={() => toggleDictionary(dict.id)}
-                  className="text-text-secondary hover:text-text-primary transition-colors"
-                  title={dict.active ? 'Disable' : 'Enable'}
-                >
-                  {dict.active ? (
-                    <ToggleOnIcon size={24} className="text-accent-teal" />
-                  ) : (
-                    <ToggleOffIcon size={24} className="text-text-tertiary" />
-                  )}
-                </button>
-                <button
-                  onClick={() => removeDictionary(dict.id)}
-                  className="text-text-tertiary hover:text-accent-brick transition-colors"
-                  title="Remove dictionary"
-                >
-                  <TrashIcon size={16} />
-                </button>
               </div>
-            ))}
+              <CheckCircleIcon size={22} className="text-accent-teal flex-shrink-0" />
+              <button
+                onClick={removeSQLiteDictionary}
+                disabled={sqliteLoading}
+                className="text-text-tertiary hover:text-accent-brick transition-colors disabled:opacity-40"
+                title="Remove database"
+              >
+                <TrashIcon size={16} />
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Add Dictionary */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".json"
+          accept=".db,.db3,.sqlite,.sqlite3,application/x-sqlite3,application/vnd.sqlite3"
           onChange={handleFileImport}
           className="hidden"
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="w-full py-4 border border-dashed border-text-disabled rounded-[15px] flex items-center justify-center gap-2 text-text-secondary hover:border-text-tertiary hover:text-text-primary transition-all duration-200"
+          disabled={sqliteLoading}
+          className="w-full py-4 border border-dashed border-text-disabled rounded-[15px] flex items-center justify-center gap-2 text-text-secondary hover:border-text-tertiary hover:text-text-primary transition-all duration-200 disabled:opacity-50"
         >
           <PlusIcon size={20} />
-          <span className="text-[0.875rem]">Import Dictionary (.json)</span>
+          <span className="text-[0.875rem]">
+            {sqliteDictionary ? 'Replace SQLite Database' : 'Import SQLite Database'}
+          </span>
         </button>
 
         <p className="mt-3 text-[0.6875rem] text-text-tertiary leading-relaxed">
-          Import a JSON file with word entries. The format should be an object where keys are words 
-          and values are definitions (string) or objects with <code className="font-mono bg-elevated px-1 rounded-[4px]">definition</code>, 
-          <code className="font-mono bg-elevated px-1 rounded-[4px]">partOfSpeech</code>, and 
-          <code className="font-mono bg-elevated px-1 rounded-[4px]">example</code> fields. 
-          Language is auto-detected.
+          Import a SQLite file using the WordWeb-style schema with <code className="font-mono bg-elevated px-1 rounded-[4px]">unique_words</code>,
+          {' '}<code className="font-mono bg-elevated px-1 rounded-[4px]">word_senses</code>,
+          {' '}<code className="font-mono bg-elevated px-1 rounded-[4px]">definitions</code>, and
+          {' '}<code className="font-mono bg-elevated px-1 rounded-[4px]">word_types</code> tables.
         </p>
       </div>
 
-      {/* ═══ About Section ═══ */}
       <div className="px-6 mt-12 max-w-[480px] mx-auto">
         <h3 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-4 font-body font-medium">
           About
         </h3>
         <div className="text-text-tertiary text-[0.875rem] leading-relaxed space-y-3">
           <p>
-            <span className="font-display text-text-primary">Lexicon</span> is a personal dictionary 
-            application designed for language discovery. It combines online lookup with offline 
-            custom dictionaries for a hybrid reference experience.
-          </p>
-          <p>
-            Powered by the free{' '}
-            <a 
-              href="https://dictionaryapi.dev" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-accent-teal hover:underline"
-            >
-              DictionaryAPI.dev
-            </a>{' '}
-            service for online lookups.
+            <span className="font-display text-text-primary">Lexicon</span> is a personal dictionary
+            application designed for language discovery. It reads definitions from an imported
+            SQLite dictionary database and keeps lookup history on this device.
           </p>
           <p className="font-mono text-[0.6875rem] text-text-tertiary tracking-[0.04em]">
-            Version 1.0.0 · Atelier Edition
+            Version 1.0.0 - Atelier Edition
           </p>
         </div>
       </div>

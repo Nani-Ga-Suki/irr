@@ -1,6 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { DictionaryEntry, Bookmark, HistoryItem, CustomDictionary, ViewMode, POSFilter } from '../types';
+import type { DictionaryEntry, Bookmark, HistoryItem, CustomDictionary, ViewMode, POSFilter, SQLiteDictionaryInfo } from '../types';
 import { WOTD_POOL, detectLanguage } from '../data/words';
+import {
+  loadPersistedSQLiteDictionary,
+  openSQLiteDictionaryFile,
+  removePersistedSQLiteDictionary,
+  savePersistedSQLiteDictionary,
+  SQLiteDictionaryDatabase,
+} from '../data/sqliteDictionary';
 
 // localStorage helpers
 function loadJSON<T>(key: string, fallback: T): T {
@@ -89,6 +96,11 @@ export function useStore() {
 
   // Dictionary file data stored in memory (too large for localStorage usually)
   const dictDataRef = useRef<Map<string, Record<string, any>>>(new Map());
+  const sqliteDictionaryRef = useRef<SQLiteDictionaryDatabase | null>(null);
+  const searchRequestRef = useRef(0);
+  const [sqliteDictionary, setSQLiteDictionary] = useState<SQLiteDictionaryInfo | null>(null);
+  const [sqliteReady, setSQLiteReady] = useState(false);
+  const [sqliteLoading, setSQLiteLoading] = useState(true);
 
   // Load dictionary entries from stored data
   useEffect(() => {
@@ -102,6 +114,56 @@ export function useStore() {
       }
     });
   }, [dictionaries]);
+
+  // Load persisted SQLite dictionary database
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSQLiteDictionary() {
+      setSQLiteLoading(true);
+      try {
+        const persisted = await loadPersistedSQLiteDictionary();
+        if (!persisted) {
+          if (!cancelled) {
+            setSQLiteDictionary(null);
+            setSQLiteReady(false);
+          }
+          return;
+        }
+
+        const database = await SQLiteDictionaryDatabase.open(persisted.bytes);
+        if (cancelled) {
+          database.close();
+          return;
+        }
+
+        sqliteDictionaryRef.current?.close();
+        sqliteDictionaryRef.current = database;
+        setSQLiteDictionary({
+          name: persisted.name,
+          size: persisted.size,
+          importedAt: persisted.importedAt,
+          entryCount: persisted.entryCount,
+        });
+        setSQLiteReady(true);
+      } catch {
+        if (!cancelled) {
+          sqliteDictionaryRef.current?.close();
+          sqliteDictionaryRef.current = null;
+          setSQLiteDictionary(null);
+          setSQLiteReady(false);
+        }
+      } finally {
+        if (!cancelled) setSQLiteLoading(false);
+      }
+    }
+
+    loadSQLiteDictionary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fetch word definition
   const lookupWord = useCallback(async (word: string, addToStack = true) => {
@@ -119,7 +181,23 @@ export function useStore() {
       return updated;
     });
 
-    // Check local dictionaries first
+    // Check imported SQLite dictionary first
+    let sqliteResult: DictionaryEntry | null = null;
+    if (sqliteDictionaryRef.current) {
+      sqliteResult = sqliteDictionaryRef.current.lookupWord(trimmed);
+    }
+
+    if (sqliteResult) {
+      setCurrentEntry(sqliteResult);
+      if (addToStack) {
+        setWordStack(prev => [...prev.slice(0, stackIndex + 1), sqliteResult]);
+        setStackIndex(prev => prev + 1);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    // Check legacy JSON dictionaries
     let localResult: DictionaryEntry | null = null;
     for (const dict of dictionaries) {
       if (!dict.active) continue;
@@ -161,49 +239,16 @@ export function useStore() {
       return;
     }
 
-    // Fall back to DictionaryAPI.dev
-    try {
-      const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(trimmed)}`);
-      if (!res.ok) {
-        throw new Error('Word not found');
-      }
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const entry: DictionaryEntry = {
-          word: data[0].word,
-          phonetic: data[0].phonetic,
-          phonetics: data[0].phonetics,
-          meanings: data[0].meanings || [],
-          origin: data[0].origin,
-          sourceUrls: data[0].sourceUrls,
-        };
-        // Merge meanings from all results
-        for (let i = 1; i < data.length; i++) {
-          if (data[i].meanings) {
-            entry.meanings.push(...data[i].meanings);
-          }
-          if (!entry.phonetic && data[i].phonetic) {
-            entry.phonetic = data[i].phonetic;
-          }
-          if (!entry.origin && data[i].origin) {
-            entry.origin = data[i].origin;
-          }
-        }
-        setCurrentEntry(entry);
-        if (addToStack) {
-          setWordStack(prev => [...prev.slice(0, stackIndex + 1), entry]);
-          setStackIndex(prev => prev + 1);
-        }
-      } else {
-        throw new Error('No definitions found');
-      }
-    } catch (e: any) {
-      setError(e.message || 'Failed to look up word');
-      setCurrentEntry(null);
+    if (sqliteLoading) {
+      setError('Dictionary database is still loading.');
+    } else if (!sqliteDictionaryRef.current && dictionaries.length === 0) {
+      setError('Import a SQLite dictionary database in Settings before looking up words.');
+    } else {
+      setError('Word not found in the imported dictionary database.');
     }
-
+    setCurrentEntry(null);
     setIsLoading(false);
-  }, [dictionaries, stackIndex]);
+  }, [dictionaries, stackIndex, sqliteLoading]);
 
   // Session navigation
   const canGoBack = stackIndex > 0;
@@ -252,9 +297,19 @@ export function useStore() {
   }, []);
 
   // Search with wildcard support
-  const searchDictionaries = useCallback((query: string) => {
+  const searchDictionaries = useCallback(async (query: string) => {
+    const requestId = ++searchRequestRef.current;
+
     if (!query.trim()) {
       setSearchResults([]);
+      return;
+    }
+
+    if (sqliteDictionaryRef.current) {
+      const results = sqliteDictionaryRef.current.searchWords(query);
+      if (requestId === searchRequestRef.current) {
+        setSearchResults(results);
+      }
       return;
     }
 
@@ -301,8 +356,41 @@ export function useStore() {
     }
 
     results.sort();
-    setSearchResults(results);
+    if (requestId === searchRequestRef.current) {
+      setSearchResults(results);
+    }
   }, [dictionaries]);
+
+  const importSQLiteDictionary = useCallback(async (file: File) => {
+    setSQLiteLoading(true);
+    try {
+      const imported = await openSQLiteDictionaryFile(file);
+      sqliteDictionaryRef.current?.close();
+      sqliteDictionaryRef.current = imported.database;
+      setSQLiteDictionary(imported.info);
+      setSQLiteReady(true);
+      await savePersistedSQLiteDictionary({
+        ...imported.info,
+        bytes: imported.bytes,
+      });
+    } finally {
+      setSQLiteLoading(false);
+    }
+  }, []);
+
+  const removeSQLiteDictionary = useCallback(async () => {
+    setSQLiteLoading(true);
+    try {
+      sqliteDictionaryRef.current?.close();
+      sqliteDictionaryRef.current = null;
+      setSQLiteDictionary(null);
+      setSQLiteReady(false);
+      setSearchResults([]);
+      await removePersistedSQLiteDictionary();
+    } finally {
+      setSQLiteLoading(false);
+    }
+  }, []);
 
   // Import dictionary
   const importDictionary = useCallback((name: string, data: Record<string, any>) => {
@@ -388,6 +476,7 @@ export function useStore() {
     // Dictionaries
     dictionaries, importDictionary, toggleDictionary, removeDictionary,
     searchDictionaries,
+    sqliteDictionary, sqliteReady, sqliteLoading, importSQLiteDictionary, removeSQLiteDictionary,
 
     // WOTD
     wotd: WOTD_POOL[wotdIndex],

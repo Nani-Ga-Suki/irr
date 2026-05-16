@@ -45,5 +45,12 @@ export interface CustomDictionary {
   entries: Record<string, any>;
 }
 
+export interface SQLiteDictionaryInfo {
+  name: string;
+  size: number;
+  importedAt: number;
+  entryCount: number;
+}
+
 export type ViewMode = 'home' | 'definition' | 'bookmarks' | 'history' | 'settings';
 export type POSFilter = 'all' | 'noun' | 'verb' | 'adjective' | 'adverb';
