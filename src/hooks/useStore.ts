@@ -49,9 +49,10 @@ export function useStore() {
   const [history, setHistory] = useState<HistoryItem[]>(() => loadJSON('lexicon-history', []));
   const [dictionaries, setDictionaries] = useState<CustomDictionary[]>(() => loadJSON('lexicon-dicts', []));
 
-  // Theme & font size
+  // Theme & appearance
   const [theme, setThemeState] = useState<ThemeMode>(() => loadJSON('lexicon-theme', 'dark'));
   const [fontSize, setFontSizeState] = useState<number>(() => loadJSON('lexicon-font-size', 16));
+  const [uiSize, setUiSizeState] = useState<number>(() => loadJSON('lexicon-ui-size', 16));
 
   // WOTD
   const [wotdIndex, setWotdIndex] = useState(() => {
@@ -84,15 +85,21 @@ export function useStore() {
     if (metaEl) metaEl.setAttribute('content', themeColors[theme]);
   }, [theme]);
 
-  // Apply font size
+  // Reading text size
   const setFontSize = useCallback((size: number) => {
     setFontSizeState(size);
     saveJSON('lexicon-font-size', size);
   }, []);
 
+  // Interface scale
+  const setUiSize = useCallback((size: number) => {
+    setUiSizeState(size);
+    saveJSON('lexicon-ui-size', size);
+  }, []);
+
   useEffect(() => {
-    document.documentElement.style.fontSize = `${fontSize}px`;
-  }, [fontSize]);
+    document.documentElement.style.fontSize = `${uiSize}px`;
+  }, [uiSize]);
 
   // Dictionary file data stored in memory (too large for localStorage usually)
   const dictDataRef = useRef<Map<string, Record<string, any>>>(new Map());
@@ -504,5 +511,6 @@ export function useStore() {
     // Theme & appearance
     theme, setTheme,
     fontSize, setFontSize,
+    uiSize, setUiSize,
   };
 }

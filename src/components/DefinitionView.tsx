@@ -24,15 +24,16 @@ interface RelationLineProps {
   marker: string;
   words?: string[];
   onWordClick: (word: string) => void;
+  fontSize: string;
 }
 
-function RelationLine({ marker, words, onWordClick }: RelationLineProps) {
+function RelationLine({ marker, words, onWordClick, fontSize }: RelationLineProps) {
   if (!words || words.length === 0) return null;
 
   const visibleWords = words.slice(0, 8);
 
   return (
-    <div className="mt-1 flex items-baseline gap-2 text-[0.9375rem] text-text-secondary leading-relaxed">
+    <div className="mt-1 flex items-baseline gap-2 text-text-secondary leading-relaxed" style={{ fontSize }}>
       <span className="w-4 flex-shrink-0 font-mono text-text-tertiary text-right" aria-hidden="true">
         {marker}
       </span>
@@ -54,7 +55,7 @@ function RelationLine({ marker, words, onWordClick }: RelationLineProps) {
 }
 
 export function DefinitionView({ store }: DefinitionViewProps) {
-  const { currentEntry, isLoading, error, posFilter, setPosFilter } = store;
+  const { currentEntry, isLoading, error, posFilter, setPosFilter, fontSize } = store;
   const [showStickyHeader, setShowStickyHeader] = useState(false);
   const titleRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -141,6 +142,8 @@ export function DefinitionView({ store }: DefinitionViewProps) {
     currentEntry.phonetics?.find(p => p.text)?.text || '';
 
   const etymology = currentEntry.origin || currentEntry.etymology || '';
+  const definitionTextSize = `${fontSize}px`;
+  const supportingTextSize = `${Math.max(12, fontSize - 1)}px`;
 
   return (
     <div className="pb-28 min-h-screen" ref={scrollRef}>
@@ -233,7 +236,7 @@ export function DefinitionView({ store }: DefinitionViewProps) {
             <p className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-1 font-body font-medium">
               Etymology
             </p>
-            <p className="text-text-secondary italic text-[0.9375rem] leading-relaxed">
+            <p className="text-text-secondary italic leading-relaxed" style={{ fontSize: supportingTextSize }}>
               <LinkedText text={etymology} onWordClick={handleWordClick} />
             </p>
           </div>
@@ -261,20 +264,20 @@ export function DefinitionView({ store }: DefinitionViewProps) {
                     {di + 1}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[1.0625rem] leading-relaxed text-text-primary">
+                    <p className="leading-relaxed text-text-primary" style={{ fontSize: definitionTextSize }}>
                       <LinkedText text={capitalizeWords(def.definition)} onWordClick={handleWordClick} />
                     </p>
                     {(def.examples?.length ? def.examples : def.example ? [def.example] : []).map(example => (
-                      <p key={example} className="mt-1.5 flex items-start gap-2 text-[0.9375rem] text-text-secondary italic leading-relaxed">
+                      <p key={example} className="mt-1.5 flex items-start gap-2 text-text-secondary italic leading-relaxed" style={{ fontSize: supportingTextSize }}>
                         <span className="text-text-tertiary not-italic" aria-hidden="true">{EXAMPLE_MARKER}</span>
                         <span className="min-w-0">
                           <LinkedText text={`"${capitalizeWords(example)}"`} onWordClick={handleWordClick} />
                         </span>
                       </p>
                     ))}
-                    <RelationLine marker="=" words={def.synonyms} onWordClick={handleWordClick} />
-                    <RelationLine marker="~" words={def.broader} onWordClick={handleWordClick} />
-                    <RelationLine marker={NARROWER_MARKER} words={def.narrower} onWordClick={handleWordClick} />
+                    <RelationLine marker="=" words={def.synonyms} onWordClick={handleWordClick} fontSize={supportingTextSize} />
+                    <RelationLine marker="~" words={def.broader} onWordClick={handleWordClick} fontSize={supportingTextSize} />
+                    <RelationLine marker={NARROWER_MARKER} words={def.narrower} onWordClick={handleWordClick} fontSize={supportingTextSize} />
                   </div>
                 </div>
               ))}

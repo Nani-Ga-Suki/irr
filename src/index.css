@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+html,
+body,
+#root {
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+input,
+select,
+textarea {
+  font-size: max(16px, 1rem);
+}
+
 /* ═══════════════════════════════════════════
    THEME: Dark (default)
    ═══════════════════════════════════════════ */

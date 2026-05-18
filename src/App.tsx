@@ -31,7 +31,7 @@ export default function App() {
     <div
       className="min-h-screen bg-canvas text-text-primary relative"
       data-theme={store.theme}
-      style={{ fontSize: `${store.fontSize}px` }}
+      style={{ fontSize: `${store.uiSize}px` }}
     >
       <div className="page-enter" key={store.view + (store.currentEntry?.word || '')}>
         {renderView()}

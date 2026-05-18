@@ -38,6 +38,8 @@ export function SettingsView({ store }: SettingsViewProps) {
     setTheme,
     fontSize,
     setFontSize,
+    uiSize,
+    setUiSize,
   } = store;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -107,13 +109,12 @@ export function SettingsView({ store }: SettingsViewProps) {
 
       <div className="px-6 mt-10 max-w-[680px] mx-auto">
         <h3 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-4 font-body font-medium">
-          Font Size
+          Appearance
         </h3>
-        <div className="bg-elevated border border-border-divider p-5 rounded-[10px]">
+        <div className="bg-elevated border border-border-divider p-5 rounded-[10px] mb-4">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-[0.75rem] font-mono text-text-tertiary">A</span>
+            <span className="text-[0.8125rem] text-text-secondary">Definition text</span>
             <span className="text-[0.875rem] font-mono text-text-secondary">{fontSize}px</span>
-            <span className="text-[1.125rem] font-mono text-text-tertiary">A</span>
           </div>
           <input
             type="range"
@@ -130,6 +131,31 @@ export function SettingsView({ store }: SettingsViewProps) {
           >
             Preview text at {fontSize}px - The quick brown fox jumps over the lazy dog.
           </p>
+        </div>
+
+        <div className="bg-elevated border border-border-divider p-5 rounded-[10px]">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[0.8125rem] text-text-secondary">Interface size</span>
+            <span className="text-[0.875rem] font-mono text-text-secondary">{uiSize}px</span>
+          </div>
+          <input
+            type="range"
+            min={14}
+            max={20}
+            step={1}
+            value={uiSize}
+            onChange={(e) => setUiSize(Number(e.target.value))}
+            className="w-full"
+          />
+          <div className="mt-4 border-t border-border-divider pt-4">
+            <div
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-[8px] bg-card-hover text-text-secondary"
+              style={{ fontSize: `${uiSize}px` }}
+            >
+              <span className="font-mono text-[0.75em]">UI</span>
+              <span>Button and label preview</span>
+            </div>
+          </div>
         </div>
       </div>
 
