@@ -1,0 +1,717 @@
+Database Format And Reading Pipeline
+====================================
+
+This document describes the database format currently used by the Lexicon
+dictionary app and how the app reads it.
+
+The current primary dictionary format is one or more imported WordWeb-style
+SQLite database files. The app does not query a server. It loads each SQLite
+file inside the browser with sql.js, keeps the raw database bytes in IndexedDB,
+and converts query results into the app's DictionaryEntry data structure.
+
+
+1. File Format
+--------------
+
+The imported dictionary is a SQLite database file.
+
+Accepted file extensions in the Settings screen:
+
+- .db
+- .db3
+- .sqlite
+- .sqlite3
+
+Accepted MIME hints:
+
+- application/x-sqlite3
+- application/vnd.sqlite3
+
+The app expects a WordWeb-style schema. It validates only the required core
+tables at import/open time, but it can use extra optional tables when they are
+present.
+
+
+2. Required Tables
+------------------
+
+The app requires these tables:
+
+- unique_words
+- word_senses
+- definitions
+- word_types
+
+If any of these tables are missing, the app rejects the database with an error:
+
+SQLite dictionary is missing required table(s): ...
+
+
+3. Optional Tables Used By The App
+----------------------------------
+
+The app can also use these WordWeb-style tables when present:
+
+- derived
+  Used to resolve inflected or derived forms back to a root word.
+  Example: "receives" can resolve to "receive".
+
+- examples
+  Used to load example sentences for a word sense.
+
+- similar
+  Used to find related words and synonyms.
+
+- antonym
+  Used to find antonyms.
+
+- type_of
+  Used to find broader and narrower semantic relationships.
+
+If optional tables are missing, the code path that depends on them may return
+empty results. The current code explicitly guards the derived table before using
+it.
+
+
+4. Browser Storage
+------------------
+
+After import, the app stores the imported SQLite dictionaries in IndexedDB.
+
+IndexedDB database name:
+
+lexicon-sqlite-dictionary
+
+IndexedDB version:
+
+1
+
+Object store:
+
+dictionary
+
+Legacy single-database storage key:
+
+active
+
+Current multi-database storage key:
+
+databases
+
+Each stored database object has this shape:
+
+{
+  id: string,
+  name: string,
+  size: number,
+  importedAt: number,
+  entryCount: number,
+  language: "en" | "pt" | "es" | "fr" | "de" | "it" | "other",
+  active: boolean,
+  bytes: Uint8Array
+}
+
+The "databases" key stores an array of these objects. The bytes field contains
+the full SQLite file as a Uint8Array. On future app loads, the app reads this
+array from IndexedDB and reopens every valid database with sql.js.
+
+The older "active" key is still read as a migration fallback. If an old
+single-database object exists, the app gives it an ID, marks it active, assigns
+English as the default language, and saves it into the new "databases" list.
+
+
+5. Opening The Database
+-----------------------
+
+The app opens the SQLite file in src/data/sqliteDictionary.ts.
+
+Import flow:
+
+1. User chooses a language and a SQLite file in Settings.
+2. openSQLiteDictionaryFile(file) reads the file with file.arrayBuffer().
+3. The ArrayBuffer is converted to Uint8Array.
+4. SQLiteDictionaryDatabase.open(bytes) initializes sql.js.
+5. sql.js loads sql-wasm.wasm.
+6. The app constructs a database with new SQL.Database(bytes).
+7. assertSchema() verifies the required tables.
+8. getEntryCount() counts rows in unique_words.
+9. The app creates an ID, language label, and active flag for the database.
+10. The database info and bytes are appended to the IndexedDB database list.
+
+Reopen flow:
+
+1. useStore() calls loadPersistedSQLiteDictionaries().
+2. The stored array is read from IndexedDB key "databases".
+3. If the array does not exist, the old "active" key is checked for migration.
+4. SQLiteDictionaryDatabase.open(persisted.bytes) recreates each sql.js database.
+5. Opened database instances are kept in sqliteDictionaryRefs.current by ID.
+6. Stored byte records are kept in sqliteStoredRef.current by ID.
+7. UI state is updated with database info records.
+
+
+6. Core Type Mapping
+--------------------
+
+SQLite values are represented in TypeScript as:
+
+number | string | Uint8Array | null
+
+Rows from sql.js are converted from column/value arrays into plain objects by
+the rows<T>() helper.
+
+The main internal row shape for definitions is SenseRow:
+
+{
+  word_sense: number,
+  word: string,
+  equiv_word: string,
+  word_type: number | null,
+  sense_no: number,
+  definition_id: number,
+  usage: number,
+  part_of_speech: string | null,
+  definition: SqlValue
+}
+
+
+7. Table Roles
+--------------
+
+unique_words
+
+Purpose:
+Stores lookupable words and, in WordWeb-style databases, metadata about whether
+the word is base, derived, included/excluded by usage flags, etc.
+
+Columns used by the app:
+
+- word
+  Used for entry count and search result text.
+
+- word_id
+  Used as the root ID when resolving derived forms.
+
+- equiv_word
+  Not directly used by current search SQL, but part of the WordWeb schema.
+
+Typical WordWeb columns:
+
+- word_id
+- word
+- equiv_word
+- is_derived
+- include_usage
+- exclude_usage
+- flag
+
+
+word_senses
+
+Purpose:
+Stores individual senses for words. This is the main table for lookup.
+
+Columns used by the app:
+
+- word_sense
+  Unique sense ID. Used to fetch examples and antonyms.
+
+- word
+  Display word for this sense.
+
+- equiv_word
+  Normalized lookup key. WordWeb commonly stores uppercase compact lookup forms
+  here.
+
+- word_type
+  Numeric part-of-speech key joined to word_types.
+
+- sense_no
+  Sense number/order within the part of speech.
+
+- ID
+  Definition ID. Joined to definitions.id. Also used for synonym and type_of
+  relationship lookups.
+
+- usage
+  Usage flag used when filtering related words.
+
+
+definitions
+
+Purpose:
+Stores the actual definition text.
+
+Columns used by the app:
+
+- id
+  Joined from word_senses.ID.
+
+- definition
+  Text or encoded BLOB. If it is a Uint8Array, the app decodes it with the
+  WordWeb BLOB decoder.
+
+
+word_types
+
+Purpose:
+Maps numeric word_type values to part-of-speech labels.
+
+Columns used by the app:
+
+- word_type
+  Joined from word_senses.word_type.
+
+- name
+  Part-of-speech name.
+
+The app normalizes part of speech as follows:
+
+- name starts with "noun" or word_type is 0 -> noun
+- name starts with "verb" or word_type is 1 -> verb
+- name starts with "adj" or word_type is 2 -> adjective
+- name starts with "adv" or word_type is 3 -> adverb
+- otherwise -> lowercased name or "other"
+
+
+derived
+
+Purpose:
+Connects derived or inflected words back to root words.
+
+Columns used by the app:
+
+- word
+  The derived word the user may search for.
+
+- root_id
+  Joined to unique_words.word_id to find the root word.
+
+- irreg
+  Used for ordering. Irregular forms are sorted first.
+
+Typical WordWeb columns:
+
+- root_id
+- derived_type
+- word
+- irreg
+- word_type
+
+Example:
+
+If the user searches "receives" and no word_senses rows are found for
+"receives", the app checks derived.word = "receives", joins root_id to
+unique_words.word_id, gets "receive", and then looks up "receive".
+
+
+examples
+
+Purpose:
+Stores example sentences for a word sense.
+
+Columns used by the app:
+
+- word_sense
+  Joined from SenseRow.word_sense.
+
+- example
+  Text or encoded BLOB. Decoded through the same text decoder as definitions.
+
+
+similar
+
+Purpose:
+Stores similar-word relationships.
+
+Columns used by the app:
+
+- id1
+- id2
+
+The app treats the relationship as bidirectional. For a given definition ID, it
+finds the other side of the pair and joins that ID to word_senses.ID.
+
+
+antonym
+
+Purpose:
+Stores antonym relationships.
+
+Columns used by the app:
+
+- word_sense1
+- word_sense2
+
+The app treats the relationship as bidirectional. For a given word_sense, it
+finds the other side of the pair and joins it to word_senses.word_sense.
+
+
+type_of
+
+Purpose:
+Stores broader and narrower semantic relationships.
+
+Columns used by the app:
+
+- word_sense1
+- word_sense2
+
+The app uses the direction to decide whether to return broader or narrower
+terms:
+
+- broader:
+  sourceColumn = word_sense1
+  targetColumn = word_sense2
+
+- narrower:
+  sourceColumn = word_sense2
+  targetColumn = word_sense1
+
+The code joins the target column to word_senses.ID and returns related.word.
+
+
+8. Lookup Process
+-----------------
+
+The lookup starts in useStore.lookupWord(word).
+
+High-level flow:
+
+1. Trim and lowercase the user input.
+2. Set loading state.
+3. Switch the view to the definition page.
+4. Add the lookup to history.
+5. Try active imported SQLite dictionaries first, in import order.
+6. If SQLite returns a result, display it.
+7. If SQLite misses, fall back to legacy JSON dictionaries.
+8. If all sources miss, show a not-found message.
+
+The SQLite lookup is SQLiteDictionaryDatabase.lookupWord(word). The store calls
+this method on each active SQLite database until one returns a result.
+
+First lookup query:
+
+SELECT
+  ws.word_sense,
+  ws.word,
+  ws.equiv_word,
+  ws.word_type,
+  ws.sense_no,
+  ws.ID AS definition_id,
+  ws.usage,
+  wt.name AS part_of_speech,
+  d.definition
+FROM word_senses ws
+LEFT JOIN word_types wt ON wt.word_type = ws.word_type
+LEFT JOIN definitions d ON d.id = ws.ID
+WHERE lower(ws.word) = ?
+   OR lower(ws.equiv_word) = ?
+ORDER BY ws.word_type, ws.sense_no
+LIMIT 120
+
+Both parameters are the trimmed lowercase lookup.
+
+If this returns rows, the app decodes definitions, groups them by normalized
+part of speech, loads examples and relationships for each sense, and returns a
+DictionaryEntry.
+
+
+9. Derived-Word Fallback
+------------------------
+
+If the first lookup query returns no senses, the app tries to resolve the word
+through the derived table.
+
+Derived fallback query:
+
+SELECT DISTINCT root.word
+FROM derived d
+JOIN unique_words root ON root.word_id = d.root_id
+WHERE d.word = ? COLLATE NOCASE
+ORDER BY d.irreg DESC, root.word COLLATE NOCASE
+LIMIT 12
+
+For each root word returned, the app runs the normal senses lookup again. The
+first root word with senses wins.
+
+This is why forms such as "receives", "receiving", "runs", and "was" can display
+the base entry.
+
+
+10. Building The App Definition Object
+--------------------------------------
+
+After senses are loaded, the app creates a DictionaryEntry:
+
+{
+  word: string,
+  meanings: Meaning[]
+}
+
+The displayed word is:
+
+senses[0].word || original lookup word
+
+Meanings are grouped in a Map by normalized partOfSpeech.
+
+Each sense becomes a Definition object:
+
+{
+  definition,
+  example: examples[0],
+  examples,
+  synonyms,
+  broader,
+  narrower,
+  antonyms
+}
+
+The meaning-level synonyms and antonyms are accumulated from all definitions in
+that part of speech and deduplicated case-insensitively.
+
+Empty definitions are skipped. Empty meaning groups are not returned.
+
+
+11. Text Decoding
+-----------------
+
+Definition and example values can arrive as:
+
+- null
+- string
+- number
+- Uint8Array
+
+The app handles them like this:
+
+- null or undefined -> empty string
+- string -> normalizeText(string)
+- number -> String(number)
+- Uint8Array -> decodeWordWebBlob(value)
+
+
+12. WordWeb BLOB Decoding
+-------------------------
+
+Some WordWeb definition/example text is stored as an encoded BLOB. The app
+decodes it with this process:
+
+Constants:
+
+WORDWEB_XOR_KEY = [50, 108, 107, 74, 51, 35]
+WORDWEB_ESCAPE_BYTE = 47
+Text decoder = UTF-8
+
+Algorithm:
+
+1. Start with an empty output byte array.
+2. For each input byte at inputIndex:
+   decodedByte = inputByte XOR WORDWEB_XOR_KEY[inputIndex % 6]
+3. If decodedByte equals 47:
+   - Treat the next byte as escaped.
+   - Decode the next byte with the same XOR-key position logic.
+   - Push the escaped decoded byte directly.
+   - Advance by 2 input bytes.
+4. Otherwise, check whether decodedByte exists in WORDWEB_TOKEN_ENTRIES.
+5. If a token exists, append that token's ASCII bytes to output.
+6. If no token exists, append decodedByte itself.
+7. Decode the output bytes as UTF-8.
+8. Normalize the resulting text.
+
+The token table is a sparse byte-to-string expansion table. It compresses common
+letter groups and words such as "ing", "tion", "the", and "and".
+
+
+13. Text Normalization
+----------------------
+
+After decoding, normalizeText(value) performs these cleanup steps:
+
+1. Remove null characters:
+   \u0000 -> ""
+
+2. Resolve spelling-variant markup:
+   {{Favourable|favorable}} -> favorable
+
+   This keeps the second value inside the braces. In WordWeb data this often
+   means choosing the US spelling over the British spelling.
+
+3. Collapse repeated whitespace:
+   any whitespace sequence -> single space
+
+4. Trim leading and trailing whitespace.
+
+
+14. Search Process
+------------------
+
+The search box calls SQLiteDictionaryDatabase.searchWords(query).
+
+The query is trimmed and lowercased.
+
+If the query has no wildcard characters, prefix search is used:
+
+SELECT DISTINCT word
+FROM unique_words
+WHERE word IS NOT NULL
+  AND lower(word) LIKE ? ESCAPE '\'
+ORDER BY word COLLATE NOCASE
+LIMIT ?
+
+The parameter is:
+
+escapedQuery + "%"
+
+The default limit is 50.
+
+
+15. Wildcard Search
+-------------------
+
+The app supports these wildcard symbols:
+
+- ?
+  Any one letter a-z.
+
+- *
+  Zero or more letters a-z.
+
+- @
+  Any vowel: a, e, i, o, u.
+
+- #
+  Any consonant: b, c, d, f, g, h, j, k, l, m, n, p, q, r, s, t, v, w, x, y, z.
+
+For wildcard search:
+
+1. The app finds the literal prefix before the first wildcard.
+2. It queries up to 3000 words from unique_words using that prefix.
+3. It converts the wildcard query into a JavaScript RegExp.
+4. It filters the SQLite result set in JavaScript.
+5. It deduplicates and returns up to the requested limit.
+
+
+16. Relationship Queries
+------------------------
+
+Examples:
+
+SELECT example
+FROM examples
+WHERE word_sense = ?
+
+Antonyms:
+
+SELECT DISTINCT related.word
+FROM antonym relation
+JOIN word_senses related
+  ON related.word_sense = CASE
+    WHEN relation.word_sense1 = ? THEN relation.word_sense2
+    ELSE relation.word_sense1
+  END
+WHERE relation.word_sense1 = ? OR relation.word_sense2 = ?
+ORDER BY related.word COLLATE NOCASE
+LIMIT 24
+
+Synonyms come from two places:
+
+1. Other word_senses rows with the same definition ID.
+2. Rows connected through the similar table.
+
+The synonym query filters out:
+
+- the current word_sense
+- the current word text
+- related rows whose usage does not match sense.usage or 65536
+
+Broader and narrower words come from type_of and are also usage-filtered.
+
+
+17. Deduplication
+-----------------
+
+The app deduplicates word lists with uniqueWords().
+
+Rules:
+
+1. Trim each word.
+2. Convert the trimmed word to lowercase for the comparison key.
+3. Skip empty strings.
+4. Skip words whose lowercase key has already been seen.
+5. Preserve the original display casing of the first occurrence.
+
+
+18. Entry Count
+---------------
+
+The dictionary entry count shown in Settings comes from:
+
+SELECT COUNT(*) AS count
+FROM unique_words
+WHERE word IS NOT NULL AND word != ''
+
+This count reflects lookupable words in unique_words, not necessarily the number
+of definitions or senses.
+
+
+19. Runtime Architecture
+------------------------
+
+The active databases live in memory as sql.js Database objects.
+
+Important runtime objects:
+
+- sqliteDictionaryRefs.current
+  A Map from database ID to SQLiteDictionaryDatabase instance.
+
+- sqliteStoredRef.current
+  A Map from database ID to the persisted metadata and raw bytes.
+
+- sqliteDictionaries
+  UI metadata records: id, name, size, importedAt, entryCount, language, active.
+
+- sqliteReady
+  Whether at least one persisted SQLite dictionary opened successfully.
+
+- sqliteLoading
+  Whether the app is still loading or importing SQLite dictionaries.
+
+When removing a dictionary, the app closes that sql.js database instance,
+removes its metadata/bytes from the stored list, and updates IndexedDB. Importing
+a new database appends it to the list; it does not replace existing databases.
+
+
+20. Legacy JSON Fallback
+------------------------
+
+The current primary database is SQLite, but the store still contains support for
+older custom JSON dictionaries.
+
+SQLite lookup runs first. If it returns no result, the app checks active JSON
+dictionaries stored in localStorage/in-memory maps.
+
+Legacy JSON entries can be:
+
+- a string definition
+- an object with meanings
+- an object with definition, partOfSpeech, example, and etymology
+
+Those formats are normalized into the same DictionaryEntry shape used by SQLite.
+
+
+21. Important Limitations And Assumptions
+-----------------------------------------
+
+- The schema is WordWeb-style, not a generic dictionary schema.
+- The required schema check validates only table names, not every column.
+- The app assumes optional relationship tables follow WordWeb column names.
+- Definition lookup checks lower(ws.word) and lower(ws.equiv_word).
+- Search uses unique_words.word, not word_senses.
+- WordWeb encoded BLOBs require the XOR and token decoder.
+- Spelling-variant markup is cleaned after decoding.
+- Usage flags are used for synonym and broader/narrower filtering, but the main
+  definition lookup currently does not filter definitions by usage.
+- The app returns up to 120 senses for a direct lookup.
+- Relationship lists are limited to 24 words each.
+- Wildcard search fetches up to 3000 prefix candidates before JavaScript regex
+  filtering.

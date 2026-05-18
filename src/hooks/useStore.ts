@@ -1,13 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { DictionaryEntry, Bookmark, HistoryItem, CustomDictionary, ViewMode, POSFilter, SQLiteDictionaryInfo } from '../types';
+import type { DictionaryEntry, Bookmark, HistoryItem, CustomDictionary, ViewMode, POSFilter, SQLiteDictionaryInfo, DictionaryLanguage, SearchResult } from '../types';
 import { WOTD_POOL, detectLanguage } from '../data/words';
 import {
-  loadPersistedSQLiteDictionary,
+  loadPersistedSQLiteDictionaries,
   openSQLiteDictionaryFile,
   removePersistedSQLiteDictionary,
-  savePersistedSQLiteDictionary,
+  savePersistedSQLiteDictionaries,
   SQLiteDictionaryDatabase,
+  type StoredSQLiteDictionary,
 } from '../data/sqliteDictionary';
+import { resolveDictionaryLanguage } from '../utils/dictionaryLanguage';
 
 // localStorage helpers
 function loadJSON<T>(key: string, fallback: T): T {
@@ -27,12 +29,42 @@ function saveJSON(key: string, value: unknown) {
 
 export type ThemeMode = 'dark' | 'amoled' | 'light';
 
+function normalizeSQLiteDictionaryInfo(
+  dictionary: StoredSQLiteDictionary,
+  index: number,
+): StoredSQLiteDictionary {
+  return {
+    ...dictionary,
+    id: dictionary.id || `sqlite-${dictionary.importedAt || Date.now()}-${index}`,
+    language: resolveDictionaryLanguage(dictionary),
+    active: dictionary.active ?? true,
+  };
+}
+
+function withSQLiteSource(entry: DictionaryEntry, dictionary: SQLiteDictionaryInfo): DictionaryEntry {
+  return {
+    ...entry,
+    sourceDictionaryId: dictionary.id,
+    sourceDictionaryName: dictionary.name,
+    sourceLanguage: resolveDictionaryLanguage(dictionary),
+  };
+}
+
+function sqliteSearchResult(word: string, dictionary: SQLiteDictionaryInfo): SearchResult {
+  return {
+    word,
+    sourceDictionaryId: dictionary.id,
+    sourceDictionaryName: dictionary.name,
+    sourceLanguage: resolveDictionaryLanguage(dictionary),
+  };
+}
+
 export function useStore() {
   // View state
   const [view, setView] = useState<ViewMode>('home');
   const [posFilter, setPosFilter] = useState<POSFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
   // Current definition
@@ -103,10 +135,11 @@ export function useStore() {
 
   // Dictionary file data stored in memory (too large for localStorage usually)
   const dictDataRef = useRef<Map<string, Record<string, any>>>(new Map());
-  const sqliteDictionaryRef = useRef<SQLiteDictionaryDatabase | null>(null);
+  const sqliteDictionaryRefs = useRef<Map<string, SQLiteDictionaryDatabase>>(new Map());
+  const sqliteStoredRef = useRef<Map<string, StoredSQLiteDictionary>>(new Map());
   const searchRequestRef = useRef(0);
   const refreshedEntryRef = useRef<string | null>(null);
-  const [sqliteDictionary, setSQLiteDictionary] = useState<SQLiteDictionaryInfo | null>(null);
+  const [sqliteDictionaries, setSQLiteDictionaries] = useState<SQLiteDictionaryInfo[]>([]);
   const [sqliteReady, setSQLiteReady] = useState(false);
   const [sqliteLoading, setSQLiteLoading] = useState(true);
 
@@ -123,42 +156,62 @@ export function useStore() {
     });
   }, [dictionaries]);
 
-  // Load persisted SQLite dictionary database
+  // Load persisted SQLite dictionary databases
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSQLiteDictionary() {
+    async function loadSQLiteDictionaries() {
       setSQLiteLoading(true);
       try {
-        const persisted = await loadPersistedSQLiteDictionary();
-        if (!persisted) {
+        const persisted = await loadPersistedSQLiteDictionaries();
+        if (persisted.length === 0) {
           if (!cancelled) {
-            setSQLiteDictionary(null);
+            setSQLiteDictionaries([]);
             setSQLiteReady(false);
           }
           return;
         }
 
-        const database = await SQLiteDictionaryDatabase.open(persisted.bytes);
+        const opened: Array<{ stored: StoredSQLiteDictionary; database: SQLiteDictionaryDatabase }> = [];
+        for (let index = 0; index < persisted.length; index++) {
+          const stored = normalizeSQLiteDictionaryInfo(persisted[index], index);
+          try {
+            const database = await SQLiteDictionaryDatabase.open(stored.bytes);
+            opened.push({ stored, database });
+          } catch {
+            // Skip invalid persisted databases instead of blocking the whole app.
+          }
+        }
+
         if (cancelled) {
-          database.close();
+          opened.forEach(({ database }) => database.close());
           return;
         }
 
-        sqliteDictionaryRef.current?.close();
-        sqliteDictionaryRef.current = database;
-        setSQLiteDictionary({
-          name: persisted.name,
-          size: persisted.size,
-          importedAt: persisted.importedAt,
-          entryCount: persisted.entryCount,
+        sqliteDictionaryRefs.current.forEach(database => database.close());
+        sqliteDictionaryRefs.current.clear();
+        sqliteStoredRef.current.clear();
+
+        opened.forEach(({ stored, database }) => {
+          sqliteDictionaryRefs.current.set(stored.id, database);
+          sqliteStoredRef.current.set(stored.id, stored);
         });
-        setSQLiteReady(true);
+
+        const infos = opened.map(({ stored }) => {
+          const { bytes: _bytes, ...info } = stored;
+          return info;
+        });
+        setSQLiteDictionaries(infos);
+        setSQLiteReady(infos.length > 0);
+        if (infos.length > 0) {
+          await savePersistedSQLiteDictionaries(opened.map(({ stored }) => stored));
+        }
       } catch {
         if (!cancelled) {
-          sqliteDictionaryRef.current?.close();
-          sqliteDictionaryRef.current = null;
-          setSQLiteDictionary(null);
+          sqliteDictionaryRefs.current.forEach(database => database.close());
+          sqliteDictionaryRefs.current.clear();
+          sqliteStoredRef.current.clear();
+          setSQLiteDictionaries([]);
           setSQLiteReady(false);
         }
       } finally {
@@ -166,15 +219,74 @@ export function useStore() {
       }
     }
 
-    loadSQLiteDictionary();
+    loadSQLiteDictionaries();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
+  useEffect(() => {
+    const dictionariesToUpdate = sqliteDictionaries.filter(dictionary => (
+      dictionary.language !== resolveDictionaryLanguage(dictionary)
+    ));
+
+    if (dictionariesToUpdate.length === 0) return;
+
+    setSQLiteDictionaries(prev => prev.map(dictionary => ({
+      ...dictionary,
+      language: resolveDictionaryLanguage(dictionary),
+    })));
+
+    dictionariesToUpdate.forEach(dictionary => {
+      const stored = sqliteStoredRef.current.get(dictionary.id);
+      if (stored) {
+        sqliteStoredRef.current.set(dictionary.id, {
+          ...stored,
+          language: resolveDictionaryLanguage(stored),
+        });
+      }
+    });
+    void savePersistedSQLiteDictionaries(Array.from(sqliteStoredRef.current.values()));
+  }, [sqliteDictionaries]);
+
+  const lookupSQLiteWord = useCallback((word: string, preferredDictionaryId?: string): DictionaryEntry | null => {
+    const preferredDictionary = preferredDictionaryId
+      ? sqliteDictionaries.find(dictionary => dictionary.id === preferredDictionaryId && dictionary.active)
+      : undefined;
+    const lookupOrder = preferredDictionary
+      ? [preferredDictionary, ...sqliteDictionaries.filter(dictionary => dictionary.id !== preferredDictionary.id)]
+      : sqliteDictionaries;
+
+    for (const dictionary of lookupOrder) {
+      if (!dictionary.active) continue;
+      const database = sqliteDictionaryRefs.current.get(dictionary.id);
+      const result = database?.lookupWord(word);
+      if (result) return withSQLiteSource(result, dictionary);
+    }
+    return null;
+  }, [sqliteDictionaries]);
+
+  const activeSQLiteCount = sqliteDictionaries.filter(dictionary => dictionary.active).length;
+  const activeLegacyDictionaryCount = dictionaries.filter(dictionary => dictionary.active).length;
+
+  const addHistoryEntry = useCallback((word: string, entry?: DictionaryEntry) => {
+    const normalized = word.toLowerCase();
+    setHistory(prev => {
+      const filtered = prev.filter(h => h.word.toLowerCase() !== normalized);
+      const updated = [{
+        word: normalized,
+        timestamp: Date.now(),
+        sourceDictionaryId: entry?.sourceDictionaryId,
+        sourceDictionaryName: entry?.sourceDictionaryName,
+        sourceLanguage: entry?.sourceLanguage,
+      }, ...filtered].slice(0, 100);
+      return updated;
+    });
+  }, []);
+
   // Fetch word definition
-  const lookupWord = useCallback(async (word: string, addToStack = true) => {
+  const lookupWord = useCallback(async (word: string, addToStack = true, preferredDictionaryId?: string) => {
     const trimmed = word.trim().toLowerCase();
     if (!trimmed) return;
 
@@ -182,20 +294,11 @@ export function useStore() {
     setError(null);
     setView('definition');
 
-    // Add to history
-    setHistory(prev => {
-      const filtered = prev.filter(h => h.word.toLowerCase() !== trimmed);
-      const updated = [{ word: trimmed, timestamp: Date.now() }, ...filtered].slice(0, 100);
-      return updated;
-    });
-
     // Check imported SQLite dictionary first
-    let sqliteResult: DictionaryEntry | null = null;
-    if (sqliteDictionaryRef.current) {
-      sqliteResult = sqliteDictionaryRef.current.lookupWord(trimmed);
-    }
+    const sqliteResult = lookupSQLiteWord(trimmed, preferredDictionaryId);
 
     if (sqliteResult) {
+      addHistoryEntry(trimmed, sqliteResult);
       setCurrentEntry(sqliteResult);
       if (addToStack) {
         setWordStack(prev => [...prev.slice(0, stackIndex + 1), sqliteResult]);
@@ -233,11 +336,20 @@ export function useStore() {
             etymology: entry.etymology,
           };
         }
+        if (localResult) {
+          localResult = {
+            ...localResult,
+            sourceDictionaryId: dict.id,
+            sourceDictionaryName: dict.name,
+            sourceLanguage: dict.language,
+          };
+        }
         break;
       }
     }
 
     if (localResult) {
+      addHistoryEntry(trimmed, localResult);
       setCurrentEntry(localResult);
       if (addToStack) {
         setWordStack(prev => [...prev.slice(0, stackIndex + 1), localResult]);
@@ -249,22 +361,23 @@ export function useStore() {
 
     if (sqliteLoading) {
       setError('Dictionary database is still loading.');
-    } else if (!sqliteDictionaryRef.current && dictionaries.length === 0) {
-      setError('Import a SQLite dictionary database in Settings before looking up words.');
+    } else if (activeSQLiteCount === 0 && activeLegacyDictionaryCount === 0) {
+      setError('Import or enable a dictionary database in Settings before looking up words.');
     } else {
-      setError('Word not found in the imported dictionary database.');
+      setError('Word not found in the active dictionary databases.');
     }
+    addHistoryEntry(trimmed);
     setCurrentEntry(null);
     setIsLoading(false);
-  }, [dictionaries, stackIndex, sqliteLoading]);
+  }, [activeLegacyDictionaryCount, activeSQLiteCount, addHistoryEntry, dictionaries, lookupSQLiteWord, stackIndex, sqliteLoading]);
 
   useEffect(() => {
-    if (!sqliteReady || !currentEntry || !sqliteDictionaryRef.current) return;
+    if (!sqliteReady || !currentEntry || activeSQLiteCount === 0) return;
 
-    const refreshKey = `${currentEntry.word.toLowerCase()}:${stackIndex}:${sqliteDictionary?.importedAt ?? 0}`;
+    const refreshKey = `${currentEntry.word.toLowerCase()}:${stackIndex}:${sqliteDictionaries.map(dictionary => `${dictionary.id}:${dictionary.importedAt}:${dictionary.active}`).join('|')}`;
     if (refreshedEntryRef.current === refreshKey) return;
 
-    const refreshedEntry = sqliteDictionaryRef.current.lookupWord(currentEntry.word);
+    const refreshedEntry = lookupSQLiteWord(currentEntry.word, currentEntry.sourceDictionaryId);
     if (!refreshedEntry) return;
 
     refreshedEntryRef.current = refreshKey;
@@ -274,7 +387,7 @@ export function useStore() {
         index === stackIndex ? refreshedEntry : entry
       )));
     }
-  }, [currentEntry, sqliteDictionary?.importedAt, sqliteReady, stackIndex]);
+  }, [activeSQLiteCount, currentEntry, lookupSQLiteWord, sqliteDictionaries, sqliteReady, stackIndex]);
 
   // Session navigation
   const canGoBack = stackIndex > 0;
@@ -331,8 +444,22 @@ export function useStore() {
       return;
     }
 
-    if (sqliteDictionaryRef.current) {
-      const results = sqliteDictionaryRef.current.searchWords(query);
+    if (activeSQLiteCount > 0) {
+      const seen = new Set<string>();
+      const results: SearchResult[] = [];
+      for (const dictionary of sqliteDictionaries) {
+        if (!dictionary.active) continue;
+        const database = sqliteDictionaryRefs.current.get(dictionary.id);
+        if (!database) continue;
+        for (const word of database.searchWords(query, 50)) {
+          const key = `${dictionary.id}:${word.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          results.push(sqliteSearchResult(word, dictionary));
+          if (results.length >= 50) break;
+        }
+        if (results.length >= 50) break;
+      }
       if (requestId === searchRequestRef.current) {
         setSearchResults(results);
       }
@@ -341,7 +468,7 @@ export function useStore() {
 
     // Check if query has wildcards
     const hasWildcards = /[?*@#]/.test(query);
-    const results: string[] = [];
+    const results: SearchResult[] = [];
 
     if (hasWildcards) {
       // Convert pattern to regex
@@ -359,7 +486,15 @@ export function useStore() {
           if (entries) {
             for (const key of Object.keys(entries)) {
               if (regex.test(key) && results.length < 50) {
-                if (!results.includes(key)) results.push(key);
+                const resultKey = `${dict.id}:${key.toLowerCase()}`;
+                if (!results.some(result => `${result.sourceDictionaryId}:${result.word.toLowerCase()}` === resultKey)) {
+                  results.push({
+                    word: key,
+                    sourceDictionaryId: dict.id,
+                    sourceDictionaryName: dict.name,
+                    sourceLanguage: dict.language,
+                  });
+                }
               }
             }
           }
@@ -374,45 +509,83 @@ export function useStore() {
         if (entries) {
           for (const key of Object.keys(entries)) {
             if (key.toLowerCase().startsWith(lower) && results.length < 50) {
-              if (!results.includes(key)) results.push(key);
+              const resultKey = `${dict.id}:${key.toLowerCase()}`;
+              if (!results.some(result => `${result.sourceDictionaryId}:${result.word.toLowerCase()}` === resultKey)) {
+                results.push({
+                  word: key,
+                  sourceDictionaryId: dict.id,
+                  sourceDictionaryName: dict.name,
+                  sourceLanguage: dict.language,
+                });
+              }
             }
           }
         }
       }
     }
 
-    results.sort();
+    results.sort((a, b) => a.word.localeCompare(b.word));
     if (requestId === searchRequestRef.current) {
       setSearchResults(results);
     }
-  }, [dictionaries]);
+  }, [activeSQLiteCount, dictionaries, sqliteDictionaries]);
 
-  const importSQLiteDictionary = useCallback(async (file: File) => {
+  const importSQLiteDictionary = useCallback(async (file: File, language: DictionaryLanguage = 'en') => {
     setSQLiteLoading(true);
     try {
-      const imported = await openSQLiteDictionaryFile(file);
-      sqliteDictionaryRef.current?.close();
-      sqliteDictionaryRef.current = imported.database;
-      setSQLiteDictionary(imported.info);
-      setSQLiteReady(true);
-      await savePersistedSQLiteDictionary({
+      const imported = await openSQLiteDictionaryFile(file, language);
+      const stored: StoredSQLiteDictionary = {
         ...imported.info,
         bytes: imported.bytes,
-      });
+      };
+      sqliteDictionaryRefs.current.set(imported.info.id, imported.database);
+      sqliteStoredRef.current.set(imported.info.id, stored);
+      setSQLiteDictionaries(prev => [...prev, imported.info]);
+      setSQLiteReady(true);
+      await savePersistedSQLiteDictionaries(Array.from(sqliteStoredRef.current.values()));
     } finally {
       setSQLiteLoading(false);
     }
   }, []);
 
-  const removeSQLiteDictionary = useCallback(async () => {
+  const toggleSQLiteDictionary = useCallback(async (id: string) => {
+    const stored = sqliteStoredRef.current.get(id);
+    if (stored) {
+      const updatedStored = { ...stored, active: !stored.active };
+      sqliteStoredRef.current.set(id, updatedStored);
+      await savePersistedSQLiteDictionaries(Array.from(sqliteStoredRef.current.values()));
+    }
+    setSQLiteDictionaries(prev => prev.map(dictionary => (
+      dictionary.id === id ? { ...dictionary, active: !dictionary.active } : dictionary
+    )));
+  }, []);
+
+  const setSQLiteDictionaryLanguage = useCallback(async (id: string, language: DictionaryLanguage) => {
+    const stored = sqliteStoredRef.current.get(id);
+    if (stored) {
+      sqliteStoredRef.current.set(id, { ...stored, language });
+      await savePersistedSQLiteDictionaries(Array.from(sqliteStoredRef.current.values()));
+    }
+    setSQLiteDictionaries(prev => prev.map(dictionary => (
+      dictionary.id === id ? { ...dictionary, language } : dictionary
+    )));
+  }, []);
+
+  const removeSQLiteDictionary = useCallback(async (id: string) => {
     setSQLiteLoading(true);
     try {
-      sqliteDictionaryRef.current?.close();
-      sqliteDictionaryRef.current = null;
-      setSQLiteDictionary(null);
-      setSQLiteReady(false);
+      sqliteDictionaryRefs.current.get(id)?.close();
+      sqliteDictionaryRefs.current.delete(id);
+      sqliteStoredRef.current.delete(id);
+      const remaining = Array.from(sqliteStoredRef.current.values());
+      setSQLiteDictionaries(prev => prev.filter(dictionary => dictionary.id !== id));
+      setSQLiteReady(remaining.length > 0);
       setSearchResults([]);
-      await removePersistedSQLiteDictionary();
+      if (remaining.length > 0) {
+        await savePersistedSQLiteDictionaries(remaining);
+      } else {
+        await removePersistedSQLiteDictionary();
+      }
     } finally {
       setSQLiteLoading(false);
     }
@@ -502,7 +675,7 @@ export function useStore() {
     // Dictionaries
     dictionaries, importDictionary, toggleDictionary, removeDictionary,
     searchDictionaries,
-    sqliteDictionary, sqliteReady, sqliteLoading, importSQLiteDictionary, removeSQLiteDictionary,
+    sqliteDictionaries, sqliteReady, sqliteLoading, importSQLiteDictionary, toggleSQLiteDictionary, setSQLiteDictionaryLanguage, removeSQLiteDictionary,
 
     // WOTD
     wotd: WOTD_POOL[wotdIndex],

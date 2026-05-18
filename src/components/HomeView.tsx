@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Store } from '../hooks/storeTypes';
+import type { SearchResult } from '../types';
 import { SearchIcon, ShuffleIcon } from './Icons';
 import { capitalizeWords } from '../utils/formatText';
+import { languageLabel } from '../utils/dictionaryLanguage';
 
 interface HomeViewProps {
   store: Store;
@@ -61,8 +63,8 @@ export function HomeView({ store }: HomeViewProps) {
     }
   }, [query, store]);
 
-  const handleResultClick = useCallback((word: string) => {
-    store.lookupWord(word);
+  const handleResultClick = useCallback((result: SearchResult) => {
+    store.lookupWord(result.word, true, result.sourceDictionaryId);
   }, [store]);
 
   const insertPattern = useCallback((pattern: string) => {
@@ -147,14 +149,19 @@ export function HomeView({ store }: HomeViewProps) {
               {store.searchResults.length} match{store.searchResults.length !== 1 ? 'es' : ''}
             </p>
             <div className="border border-border-divider rounded-[15px] overflow-hidden">
-              {store.searchResults.slice(0, 20).map((word, i) => (
+              {store.searchResults.slice(0, 20).map((result, i) => (
                 <button
-                  key={word}
-                  onClick={() => handleResultClick(word)}
-                  className="list-item-enter item-highlight w-full text-left px-4 py-3 text-base text-text-primary hover:bg-elevated active:bg-card-hover hover:translate-x-1 transition-all duration-200 border-b border-border-divider last:border-b-0 block"
+                  key={`${result.sourceDictionaryId ?? 'local'}-${result.word}`}
+                  onClick={() => handleResultClick(result)}
+                  className="list-item-enter item-highlight w-full text-left px-4 py-3 hover:bg-elevated active:bg-card-hover hover:translate-x-1 transition-all duration-200 border-b border-border-divider last:border-b-0 flex items-center justify-between gap-3"
                   style={{ animationDelay: `${i * 0.04}s` }}
                 >
-                  {capitalizeWords(word)}
+                  <span className="text-base text-text-primary truncate">{capitalizeWords(result.word)}</span>
+                  {result.sourceLanguage && (
+                    <span className="text-[0.625rem] uppercase tracking-[0.08em] font-mono text-text-tertiary bg-card-hover px-1.5 py-0.5 rounded-[6px] flex-shrink-0">
+                      {languageLabel(result.sourceLanguage)}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -210,7 +217,7 @@ export function HomeView({ store }: HomeViewProps) {
                   return (
                     <button
                       key={item.word + item.timestamp}
-                      onClick={() => store.lookupWord(item.word)}
+                      onClick={() => store.lookupWord(item.word, true, item.sourceDictionaryId)}
                       className="list-item-enter item-highlight w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-elevated active:bg-card-hover transition-all duration-200 border-b border-border-divider"
                       style={{ animationDelay: `${idx * 0.04}s` }}
                     >

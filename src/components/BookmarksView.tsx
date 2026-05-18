@@ -188,9 +188,9 @@ export function BookmarksView({ store }: BookmarksViewProps) {
   const isDragging = useRef(false);
   const deltaRef = useRef(0);
 
-  const handleWordClick = useCallback((word: string) => {
+  const handleWordClick = useCallback((word: string, sourceDictionaryId?: string) => {
     if (editMode) return;
-    store.lookupWord(word);
+    store.lookupWord(word, true, sourceDictionaryId);
   }, [store, editMode]);
 
   const handleRemoveBookmark = useCallback((word: string) => {
@@ -580,7 +580,7 @@ export function BookmarksView({ store }: BookmarksViewProps) {
                             onDelete={() => removeHistoryItem(item.timestamp)}
                           >
                             <button
-                              onClick={() => handleWordClick(item.word)}
+                              onClick={() => handleWordClick(item.word, item.sourceDictionaryId)}
                               className="list-item-enter item-highlight w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-elevated active:bg-card-hover transition-all duration-200 border-b border-border-divider"
                               style={{ animationDelay: `${Math.min(currentIdx, 15) * 0.04}s` }}
                             >

@@ -1,6 +1,6 @@
 import initSqlJs from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
-import type { DictionaryEntry, SQLiteDictionaryInfo } from '../types';
+import type { DictionaryEntry, DictionaryLanguage, SQLiteDictionaryInfo } from '../types';
 
 type SqlValue = number | string | Uint8Array | null;
 type QueryResult = { columns: string[]; values: SqlValue[][] };
@@ -13,7 +13,7 @@ type SqlJsModule = {
   Database: new (data?: ArrayLike<number> | null) => SqlDatabase;
 };
 
-type StoredSQLiteDictionary = SQLiteDictionaryInfo & {
+export type StoredSQLiteDictionary = SQLiteDictionaryInfo & {
   bytes: Uint8Array;
 };
 
@@ -33,6 +33,7 @@ const STORAGE_DB_NAME = 'lexicon-sqlite-dictionary';
 const STORAGE_DB_VERSION = 1;
 const STORAGE_STORE = 'dictionary';
 const STORAGE_KEY = 'active';
+const STORAGE_LIST_KEY = 'databases';
 const textDecoder = new TextDecoder('utf-8');
 const WORDWEB_XOR_KEY = new Uint8Array([50, 108, 107, 74, 51, 35]);
 const WORDWEB_ESCAPE_BYTE = 47;
@@ -287,12 +288,23 @@ export function loadPersistedSQLiteDictionary(): Promise<StoredSQLiteDictionary 
     .then(value => value ?? null);
 }
 
-export function savePersistedSQLiteDictionary(dictionary: StoredSQLiteDictionary): Promise<IDBValidKey> {
-  return withStorage<IDBValidKey>('readwrite', store => store.put(dictionary, STORAGE_KEY));
+export async function loadPersistedSQLiteDictionaries(): Promise<StoredSQLiteDictionary[]> {
+  const dictionaries = await withStorage<StoredSQLiteDictionary[] | undefined>('readonly', store => store.get(STORAGE_LIST_KEY));
+  if (Array.isArray(dictionaries)) return dictionaries;
+
+  const legacy = await loadPersistedSQLiteDictionary();
+  return legacy ? [legacy] : [];
+}
+
+export function savePersistedSQLiteDictionaries(dictionaries: StoredSQLiteDictionary[]): Promise<IDBValidKey> {
+  return withStorage<IDBValidKey>('readwrite', store => store.put(dictionaries, STORAGE_LIST_KEY));
 }
 
 export function removePersistedSQLiteDictionary(): Promise<void> {
-  return withStorage<undefined>('readwrite', store => store.delete(STORAGE_KEY)).then(() => undefined);
+  return Promise.all([
+    withStorage<undefined>('readwrite', store => store.delete(STORAGE_KEY)),
+    withStorage<undefined>('readwrite', store => store.delete(STORAGE_LIST_KEY)),
+  ]).then(() => undefined);
 }
 
 function normalizeText(value: string) {
@@ -654,14 +666,17 @@ export class SQLiteDictionaryDatabase {
   }
 }
 
-export async function openSQLiteDictionaryFile(file: File) {
+export async function openSQLiteDictionaryFile(file: File, language: DictionaryLanguage = 'en') {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const database = await SQLiteDictionaryDatabase.open(bytes);
   const info: SQLiteDictionaryInfo = {
+    id: `sqlite-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: file.name,
     size: file.size,
     importedAt: Date.now(),
     entryCount: database.getEntryCount(),
+    language,
+    active: true,
   };
 
   return { database, info, bytes };

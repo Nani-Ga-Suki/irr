@@ -4,6 +4,7 @@ import type { POSFilter } from '../types';
 import { LinkedText } from './LinkedText';
 import { ChevronLeftIcon } from './Icons';
 import { capitalizeWords } from '../utils/formatText';
+import { languageLabel } from '../utils/dictionaryLanguage';
 
 interface DefinitionViewProps {
   store: Store;
@@ -87,8 +88,8 @@ export function DefinitionView({ store }: DefinitionViewProps) {
   }, [currentEntry?.word]);
 
   const handleWordClick = useCallback((word: string) => {
-    store.lookupWord(word);
-  }, [store]);
+    store.lookupWord(word, true, currentEntry?.sourceDictionaryId);
+  }, [currentEntry?.sourceDictionaryId, store]);
 
   if (isLoading) {
     return (
@@ -200,6 +201,12 @@ export function DefinitionView({ store }: DefinitionViewProps) {
         {phonetic && (
           <p className="font-mono text-[0.9em] text-text-tertiary tracking-[0.04em] mt-1">
             {phonetic}
+          </p>
+        )}
+        {currentEntry.sourceLanguage && (
+          <p className="font-mono text-[0.6875rem] text-text-tertiary tracking-[0.08em] uppercase mt-2">
+            {languageLabel(currentEntry.sourceLanguage)}
+            {currentEntry.sourceDictionaryName ? ` - ${currentEntry.sourceDictionaryName}` : ''}
           </p>
         )}
       </div>

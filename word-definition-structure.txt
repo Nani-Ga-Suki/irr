@@ -1,0 +1,236 @@
+Word Definition Structure
+=========================
+
+This document explains the structure of a word definition as used by the
+Lexicon dictionary app. A word definition is not just one line of text. It is a
+hierarchical entry made of a headword, optional pronunciation data, one or more
+meanings, and one or more definition items inside each meaning.
+
+
+1. Dictionary Entry
+-------------------
+
+The top-level object is the dictionary entry. It represents one word or phrase
+that the user looked up.
+
+Main fields:
+
+- word
+  The headword being displayed, such as "receive", "auspicious", or
+  "good luck". This is the visible title of the definition page.
+
+- phonetic
+  An optional simple pronunciation string, usually shown near the headword.
+
+- phonetics
+  Optional pronunciation records. A dictionary source may provide several
+  pronunciations, possibly with audio.
+
+- meanings
+  A required list of meaning groups. Each group usually corresponds to one part
+  of speech, such as noun, verb, adjective, or adverb.
+
+- etymology or origin
+  Optional word history. This can explain where the word came from, older forms
+  of the word, or source languages.
+
+- sourceUrls
+  Optional source links when the dictionary source provides them.
+
+
+2. Meaning Group
+----------------
+
+A meaning group organizes definitions by grammatical role.
+
+For example, the word "light" can be a noun, verb, adjective, or adverb. Each
+part of speech should be its own meaning group so the user can scan the entry
+more easily.
+
+Main fields:
+
+- partOfSpeech
+  The grammatical category. Examples:
+  noun
+  verb
+  adjective
+  adverb
+  other
+
+- definitions
+  A required list of definition items for this part of speech.
+
+- synonyms
+  Optional words with similar meaning for the whole meaning group.
+
+- antonyms
+  Optional words with opposite meaning for the whole meaning group.
+
+
+3. Definition Item
+------------------
+
+A definition item is a single numbered sense inside a meaning group.
+
+For example:
+
+Word: auspicious
+Part of speech: adjective
+Definition 1: Auguring favorable circumstances and good luck
+
+Main fields:
+
+- definition
+  The actual explanation of the sense. This is the most important text.
+
+- example
+  A single example sentence, if the source only provides one.
+
+- examples
+  A list of example sentences. This is preferred when the source provides
+  multiple examples.
+
+- synonyms
+  Related words that can sometimes substitute for this specific sense.
+
+- antonyms
+  Opposite words for this specific sense.
+
+- broader
+  More general words or categories. In WordWeb-style data this can come from
+  "type_of" relationships. Example: "vehicle" may be broader than "car".
+
+- narrower
+  More specific words or subtypes. Example: "sedan" may be narrower than "car".
+
+
+4. Display Order
+----------------
+
+The app displays a word entry in this order:
+
+1. Headword
+2. Pronunciation, if available
+3. Part-of-speech filter chips
+4. Etymology, if available
+5. Meaning groups
+6. Numbered definitions inside each meaning group
+7. Examples under the relevant definition
+8. Synonyms, broader terms, and narrower terms under the relevant definition
+9. Antonyms section, if any antonyms exist
+
+
+5. Example Data Shape
+---------------------
+
+A simplified dictionary entry looks like this:
+
+{
+  "word": "auspicious",
+  "phonetic": "",
+  "meanings": [
+    {
+      "partOfSpeech": "adjective",
+      "definitions": [
+        {
+          "definition": "Auguring favorable circumstances and good luck",
+          "examples": [
+            "An auspicious beginning"
+          ],
+          "synonyms": [
+            "favorable",
+            "promising"
+          ],
+          "antonyms": [
+            "inauspicious"
+          ],
+          "broader": [],
+          "narrower": []
+        }
+      ],
+      "synonyms": [
+        "favorable",
+        "promising"
+      ],
+      "antonyms": [
+        "inauspicious"
+      ]
+    }
+  ],
+  "etymology": ""
+}
+
+
+6. Relationship Between SQLite Data And App Data
+------------------------------------------------
+
+When using a WordWeb-style SQLite dictionary, the app builds this structure from
+several database tables.
+
+- unique_words
+  Stores unique lookup words and derived forms. This helps the app find base
+  entries for words like "receives", "running", or "was".
+
+- derived
+  Connects inflected or derived words back to their root words. For example,
+  "receives" can point back to "receive".
+
+- word_senses
+  Stores individual senses for a word. Each row usually has a word, equivalent
+  lookup form, part-of-speech type, sense number, definition ID, and usage flags.
+
+- definitions
+  Stores the actual definition text. Some definitions are compressed or encoded
+  and must be decoded before display.
+
+- examples
+  Stores example sentences for a sense.
+
+- word_types
+  Maps numeric part-of-speech values to names such as noun, verb, adjective, or
+  adverb.
+
+- similar
+  Stores related similar words used as synonyms or nearby semantic relations.
+
+- antonym
+  Stores opposite-word relationships.
+
+- type_of
+  Stores broader and narrower category relationships.
+
+
+7. Text Cleanup Rules
+---------------------
+
+Dictionary source text can contain internal markup that should not be shown to
+the user.
+
+Example:
+
+{{Favourable|favorable}}
+
+This means the source has two spelling variants. In this app, the displayed
+definition keeps the second value, so it becomes:
+
+favorable
+
+The app also removes null characters, collapses repeated whitespace, and trims
+leading or trailing spaces.
+
+
+8. Important Design Notes
+-------------------------
+
+- One word can have many meanings.
+- One meaning can have many numbered definitions.
+- A definition can have zero, one, or many examples.
+- Synonyms and antonyms can exist at either the meaning level or the individual
+  definition level.
+- The displayed word may be a root word even if the user searched for an
+  inflected form.
+- The same written word can appear under different parts of speech with
+  different definitions.
+- The app should avoid showing raw dictionary markup or database-specific
+  implementation details in the final user-facing definition text.
+

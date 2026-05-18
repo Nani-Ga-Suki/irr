@@ -1,5 +1,8 @@
 export interface DictionaryEntry {
   word: string;
+  sourceDictionaryId?: string;
+  sourceDictionaryName?: string;
+  sourceLanguage?: DictionaryLanguage;
   phonetic?: string;
   phonetics?: Array<{
     text?: string;
@@ -37,22 +40,37 @@ export interface Bookmark {
 export interface HistoryItem {
   word: string;
   timestamp: number;
+  sourceDictionaryId?: string;
+  sourceDictionaryName?: string;
+  sourceLanguage?: DictionaryLanguage;
+}
+
+export interface SearchResult {
+  word: string;
+  sourceDictionaryId?: string;
+  sourceDictionaryName?: string;
+  sourceLanguage?: DictionaryLanguage;
 }
 
 export interface CustomDictionary {
   id: string;
   name: string;
-  language: 'en' | 'pt';
+  language: DictionaryLanguage;
   entryCount: number;
   active: boolean;
   entries: Record<string, any>;
 }
 
+export type DictionaryLanguage = 'en' | 'pt' | 'es' | 'fr' | 'de' | 'it' | 'other';
+
 export interface SQLiteDictionaryInfo {
+  id: string;
   name: string;
   size: number;
   importedAt: number;
   entryCount: number;
+  language: DictionaryLanguage;
+  active: boolean;
 }
 
 export type ViewMode = 'home' | 'definition' | 'bookmarks' | 'history' | 'settings';

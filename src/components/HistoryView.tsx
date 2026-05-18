@@ -175,8 +175,8 @@ export function HistoryView({ store }: HistoryViewProps) {
   const { history, clearHistory, removeHistoryItem } = store;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  const handleWordClick = useCallback((word: string) => {
-    store.lookupWord(word);
+  const handleWordClick = useCallback((word: string, sourceDictionaryId?: string) => {
+    store.lookupWord(word, true, sourceDictionaryId);
   }, [store]);
 
   const historyGroups = groupByDate(history);
@@ -219,7 +219,7 @@ export function HistoryView({ store }: HistoryViewProps) {
                         onDelete={() => removeHistoryItem(item.timestamp)}
                       >
                         <button
-                          onClick={() => handleWordClick(item.word)}
+                          onClick={() => handleWordClick(item.word, item.sourceDictionaryId)}
                           className="list-item-enter item-highlight w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-elevated active:bg-card-hover transition-all duration-200 border-b border-border-divider"
                           style={{ animationDelay: `${Math.min(currentIdx, 15) * 0.04}s` }}
                         >
