@@ -21,8 +21,11 @@ export interface Meaning {
 export interface Definition {
   definition: string;
   example?: string;
+  examples?: string[];
   synonyms?: string[];
   antonyms?: string[];
+  broader?: string[];
+  narrower?: string[];
 }
 
 export interface Bookmark {

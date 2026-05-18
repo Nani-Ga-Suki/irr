@@ -17,6 +17,42 @@ const POS_FILTERS: { label: string; value: POSFilter }[] = [
   { label: 'Adv', value: 'adverb' },
 ];
 
+const EXAMPLE_MARKER = '\u2022';
+const NARROWER_MARKER = '\u2192';
+
+interface RelationLineProps {
+  marker: string;
+  words?: string[];
+  onWordClick: (word: string) => void;
+}
+
+function RelationLine({ marker, words, onWordClick }: RelationLineProps) {
+  if (!words || words.length === 0) return null;
+
+  const visibleWords = words.slice(0, 8);
+
+  return (
+    <div className="mt-1 flex items-baseline gap-2 text-[0.9375rem] text-text-secondary leading-relaxed">
+      <span className="w-4 flex-shrink-0 font-mono text-text-tertiary text-right" aria-hidden="true">
+        {marker}
+      </span>
+      <span className="min-w-0">
+        {visibleWords.map((word, index) => (
+          <span key={`${marker}-${word}`}>
+            <button
+              onClick={() => onWordClick(word)}
+              className="hover:text-text-primary transition-colors"
+            >
+              {capitalizeWords(word)}
+            </button>
+            {index < visibleWords.length - 1 && <span>, </span>}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 export function DefinitionView({ store }: DefinitionViewProps) {
   const { currentEntry, isLoading, error, posFilter, setPosFilter } = store;
   const [showStickyHeader, setShowStickyHeader] = useState(false);
@@ -92,14 +128,11 @@ export function DefinitionView({ store }: DefinitionViewProps) {
     ? currentEntry.meanings
     : currentEntry.meanings.filter(m => m.partOfSpeech.toLowerCase() === posFilter);
 
-  // Aggregate all synonyms and antonyms
-  const allSynonyms = new Set<string>();
+  // Aggregate antonyms for the section below the definition list
   const allAntonyms = new Set<string>();
   currentEntry.meanings.forEach(m => {
-    m.synonyms?.forEach(s => allSynonyms.add(s));
     m.antonyms?.forEach(a => allAntonyms.add(a));
     m.definitions.forEach(d => {
-      d.synonyms?.forEach(s => allSynonyms.add(s));
       d.antonyms?.forEach(a => allAntonyms.add(a));
     });
   });
@@ -221,34 +254,27 @@ export function DefinitionView({ store }: DefinitionViewProps) {
 
             {/* Definitions */}
             <div className="space-y-5">
-              {meaning.definitions.slice(0, 5).map((def, di) => (
+              {meaning.definitions.map((def, di) => (
                 <div key={di} className="flex gap-4">
                   {/* Marginalia number */}
                   <div className="def-number w-6 flex-shrink-0 pt-0.5 text-right">
                     {di + 1}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-base leading-relaxed text-text-primary">
+                    <p className="text-[1.0625rem] leading-relaxed text-text-primary">
                       <LinkedText text={capitalizeWords(def.definition)} onWordClick={handleWordClick} />
                     </p>
-                    {def.example && (
-                      <p className="mt-1.5 text-[0.9375rem] text-text-secondary italic leading-relaxed pl-3 border-l border-border-divider">
-                        <LinkedText text={`"${capitalizeWords(def.example)}"`} onWordClick={handleWordClick} />
+                    {(def.examples?.length ? def.examples : def.example ? [def.example] : []).map(example => (
+                      <p key={example} className="mt-1.5 flex items-start gap-2 text-[0.9375rem] text-text-secondary italic leading-relaxed">
+                        <span className="text-text-tertiary not-italic" aria-hidden="true">{EXAMPLE_MARKER}</span>
+                        <span className="min-w-0">
+                          <LinkedText text={`"${capitalizeWords(example)}"`} onWordClick={handleWordClick} />
+                        </span>
                       </p>
-                    )}
-                    {def.synonyms && def.synonyms.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {def.synonyms.slice(0, 6).map(syn => (
-                          <button
-                            key={syn}
-                            onClick={() => handleWordClick(syn)}
-                            className="text-[0.8125rem] text-text-secondary border border-text-disabled px-3 py-1 rounded-[8px] hover:bg-deep hover:text-canvas hover:border-deep transition-all duration-150"
-                          >
-                            {capitalizeWords(syn)}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    ))}
+                    <RelationLine marker="=" words={def.synonyms} onWordClick={handleWordClick} />
+                    <RelationLine marker="~" words={def.broader} onWordClick={handleWordClick} />
+                    <RelationLine marker={NARROWER_MARKER} words={def.narrower} onWordClick={handleWordClick} />
                   </div>
                 </div>
               ))}
@@ -257,45 +283,25 @@ export function DefinitionView({ store }: DefinitionViewProps) {
         ))}
       </div>
 
-      {/* Derived & Related */}
-      {(allSynonyms.size > 0 || allAntonyms.size > 0) && (
+      {/* Antonyms */}
+      {allAntonyms.size > 0 && (
         <div className="px-6 mt-10 max-w-[680px] mx-auto">
-          {allSynonyms.size > 0 && (
-            <div className="mb-6">
-              <h4 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-3 font-body font-medium">
-                Related Words
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {Array.from(allSynonyms).slice(0, 12).map(syn => (
-                  <button
-                    key={syn}
-                    onClick={() => handleWordClick(syn)}
-                    className="text-[0.8125rem] text-text-secondary border border-text-disabled px-3 py-1 rounded-[8px] hover:bg-deep hover:text-canvas hover:border-deep transition-all duration-150"
-                  >
-                    {capitalizeWords(syn)}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <h4 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-3 font-body font-medium">
+              Antonyms
+            </h4>
+            <div className="flex flex-wrap gap-2">
+              {Array.from(allAntonyms).slice(0, 12).map(ant => (
+                <button
+                  key={ant}
+                  onClick={() => handleWordClick(ant)}
+                  className="text-[0.8125rem] text-text-secondary border border-text-disabled px-3 py-1 rounded-[8px] hover:bg-deep hover:text-canvas hover:border-deep transition-all duration-150"
+                >
+                  {capitalizeWords(ant)}
+                </button>
+              ))}
             </div>
-          )}
-          {allAntonyms.size > 0 && (
-            <div>
-              <h4 className="text-[0.75rem] uppercase tracking-[0.12em] text-text-secondary mb-3 font-body font-medium">
-                Antonyms
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {Array.from(allAntonyms).slice(0, 12).map(ant => (
-                  <button
-                    key={ant}
-                    onClick={() => handleWordClick(ant)}
-                    className="text-[0.8125rem] text-text-secondary border border-text-disabled px-3 py-1 rounded-[8px] hover:bg-deep hover:text-canvas hover:border-deep transition-all duration-150"
-                  >
-                    {capitalizeWords(ant)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
 

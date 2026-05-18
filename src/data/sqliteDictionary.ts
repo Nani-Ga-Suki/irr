@@ -24,6 +24,7 @@ type SenseRow = {
   word_type: number | null;
   sense_no: number;
   definition_id: number;
+  usage: number;
   part_of_speech: string | null;
   definition: SqlValue;
 };
@@ -297,6 +298,7 @@ export function removePersistedSQLiteDictionary(): Promise<void> {
 function normalizeText(value: string) {
   return value
     .replace(/\u0000/g, '')
+    .replace(/\{\{(.*?)\|(.*?)\}\}/g, '$2')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -382,6 +384,8 @@ function uniqueWords(words: string[]) {
 }
 
 export class SQLiteDictionaryDatabase {
+  private hasDerivedTable = false;
+
   private constructor(private readonly db: SqlDatabase) {}
 
   static async open(bytes: Uint8Array) {
@@ -408,24 +412,14 @@ export class SQLiteDictionaryDatabase {
     const normalized = word.trim().toLowerCase();
     if (!normalized) return null;
 
-    const senses = this.rows<SenseRow>(`
-      SELECT
-        ws.word_sense,
-        ws.word,
-        ws.equiv_word,
-        ws.word_type,
-        ws.sense_no,
-        ws.ID AS definition_id,
-        wt.name AS part_of_speech,
-        d.definition
-      FROM word_senses ws
-      LEFT JOIN word_types wt ON wt.word_type = ws.word_type
-      LEFT JOIN definitions d ON d.id = ws.ID
-      WHERE lower(ws.word) = ?
-         OR lower(ws.equiv_word) = ?
-      ORDER BY ws.word_type, ws.sense_no
-      LIMIT 120
-    `, [normalized, normalized]);
+    let senses = this.sensesForLookup(normalized);
+    if (senses.length === 0) {
+      const rootWords = this.rootWordsForDerivedWord(normalized);
+      for (const rootWord of rootWords) {
+        senses = this.sensesForLookup(rootWord);
+        if (senses.length > 0) break;
+      }
+    }
 
     if (senses.length === 0) return null;
 
@@ -439,6 +433,8 @@ export class SQLiteDictionaryDatabase {
       const partOfSpeech = normalizePartOfSpeech(sense.part_of_speech, sense.word_type);
       const examples = this.examplesForSense(sense.word_sense);
       const synonyms = this.synonymsForSense(sense);
+      const broader = this.typeOfWordsForSense(sense, 'broader');
+      const narrower = this.typeOfWordsForSense(sense, 'narrower');
       const antonyms = this.relatedWords('antonym', 'word_sense1', 'word_sense2', sense.word_sense);
 
       if (!meanings.has(partOfSpeech)) {
@@ -454,7 +450,10 @@ export class SQLiteDictionaryDatabase {
       meaning.definitions.push({
         definition,
         example: examples[0],
+        examples,
         synonyms,
+        broader,
+        narrower,
         antonyms,
       });
       meaning.synonyms = uniqueWords([...(meaning.synonyms ?? []), ...synonyms]);
@@ -468,6 +467,42 @@ export class SQLiteDictionaryDatabase {
       word: entryWord,
       meanings: groupedMeanings,
     };
+  }
+
+  private sensesForLookup(normalized: string) {
+    return this.rows<SenseRow>(`
+      SELECT
+        ws.word_sense,
+        ws.word,
+        ws.equiv_word,
+        ws.word_type,
+        ws.sense_no,
+        ws.ID AS definition_id,
+        ws.usage,
+        wt.name AS part_of_speech,
+        d.definition
+      FROM word_senses ws
+      LEFT JOIN word_types wt ON wt.word_type = ws.word_type
+      LEFT JOIN definitions d ON d.id = ws.ID
+      WHERE lower(ws.word) = ?
+         OR lower(ws.equiv_word) = ?
+      ORDER BY ws.word_type, ws.sense_no
+      LIMIT 120
+    `, [normalized, normalized]);
+  }
+
+  private rootWordsForDerivedWord(normalized: string) {
+    if (!this.hasDerivedTable) return [];
+
+    const rows = this.rows<{ word: string }>(`
+      SELECT DISTINCT root.word
+      FROM derived d
+      JOIN unique_words root ON root.word_id = d.root_id
+      WHERE d.word = ? COLLATE NOCASE
+      ORDER BY d.irreg DESC, root.word COLLATE NOCASE
+      LIMIT 12
+    `, [normalized]);
+    return uniqueWords(rows.map(row => row.word));
   }
 
   searchWords(query: string, limit = 50) {
@@ -515,6 +550,17 @@ export class SQLiteDictionaryDatabase {
     if (missing.length > 0) {
       throw new Error(`SQLite dictionary is missing required table(s): ${missing.join(', ')}`);
     }
+    this.hasDerivedTable = found.has('derived') || this.tableExists('derived');
+  }
+
+  private tableExists(name: string) {
+    const rows = this.rows<{ name: string }>(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = ?
+      LIMIT 1
+    `, [name]);
+    return rows.length > 0;
   }
 
   private examplesForSense(wordSense: number) {
@@ -522,7 +568,6 @@ export class SQLiteDictionaryDatabase {
       SELECT example
       FROM examples
       WHERE word_sense = ?
-      LIMIT 3
     `, [wordSense]);
     return rows.map(row => decodeDbText(row.example)).filter(Boolean);
   }
@@ -552,6 +597,7 @@ export class SQLiteDictionaryDatabase {
         WHERE related.ID = ?
           AND related.word_sense != ?
           AND lower(related.word) != lower(?)
+          AND (related.usage = ? OR related.usage = 65536)
         UNION
         SELECT DISTINCT related.word
         FROM similar relation
@@ -560,7 +606,8 @@ export class SQLiteDictionaryDatabase {
             WHEN relation.id1 = ? THEN relation.id2
             ELSE relation.id1
           END
-        WHERE relation.id1 = ? OR relation.id2 = ?
+        WHERE (relation.id1 = ? OR relation.id2 = ?)
+          AND (related.usage = ? OR related.usage = 65536)
       )
       ORDER BY word COLLATE NOCASE
       LIMIT 24
@@ -568,11 +615,29 @@ export class SQLiteDictionaryDatabase {
       sense.definition_id,
       sense.word_sense,
       sense.word,
+      sense.usage,
       sense.definition_id,
       sense.definition_id,
       sense.definition_id,
+      sense.usage,
     ]);
     return uniqueWords(rows.map(row => row.word).filter(word => word.toLowerCase() !== sense.word.toLowerCase()));
+  }
+
+  private typeOfWordsForSense(sense: SenseRow, direction: 'broader' | 'narrower') {
+    const sourceColumn = direction === 'broader' ? 'word_sense1' : 'word_sense2';
+    const targetColumn = direction === 'broader' ? 'word_sense2' : 'word_sense1';
+    const rows = this.rows<{ word: string }>(`
+      SELECT DISTINCT related.word
+      FROM type_of relation
+      JOIN word_senses related ON related.ID = relation.${targetColumn}
+      WHERE relation.${sourceColumn} = ?
+        AND (related.usage = ? OR related.usage = 65536)
+        AND lower(related.word) != lower(?)
+      ORDER BY related.word COLLATE NOCASE
+      LIMIT 24
+    `, [sense.definition_id, sense.usage, sense.word]);
+    return uniqueWords(rows.map(row => row.word));
   }
 
   private rows<T extends Record<string, unknown>>(sql: string, params: SqlValue[] = []): T[] {

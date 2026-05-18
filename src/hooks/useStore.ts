@@ -98,6 +98,7 @@ export function useStore() {
   const dictDataRef = useRef<Map<string, Record<string, any>>>(new Map());
   const sqliteDictionaryRef = useRef<SQLiteDictionaryDatabase | null>(null);
   const searchRequestRef = useRef(0);
+  const refreshedEntryRef = useRef<string | null>(null);
   const [sqliteDictionary, setSQLiteDictionary] = useState<SQLiteDictionaryInfo | null>(null);
   const [sqliteReady, setSQLiteReady] = useState(false);
   const [sqliteLoading, setSQLiteLoading] = useState(true);
@@ -249,6 +250,24 @@ export function useStore() {
     setCurrentEntry(null);
     setIsLoading(false);
   }, [dictionaries, stackIndex, sqliteLoading]);
+
+  useEffect(() => {
+    if (!sqliteReady || !currentEntry || !sqliteDictionaryRef.current) return;
+
+    const refreshKey = `${currentEntry.word.toLowerCase()}:${stackIndex}:${sqliteDictionary?.importedAt ?? 0}`;
+    if (refreshedEntryRef.current === refreshKey) return;
+
+    const refreshedEntry = sqliteDictionaryRef.current.lookupWord(currentEntry.word);
+    if (!refreshedEntry) return;
+
+    refreshedEntryRef.current = refreshKey;
+    setCurrentEntry(refreshedEntry);
+    if (stackIndex >= 0) {
+      setWordStack(prev => prev.map((entry, index) => (
+        index === stackIndex ? refreshedEntry : entry
+      )));
+    }
+  }, [currentEntry, sqliteDictionary?.importedAt, sqliteReady, stackIndex]);
 
   // Session navigation
   const canGoBack = stackIndex > 0;

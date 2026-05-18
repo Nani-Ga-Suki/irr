@@ -332,9 +332,10 @@ export function BookmarksView({ store }: BookmarksViewProps) {
   return (
     <div className="pb-28 min-h-screen">
       {/* ─── Header ─── */}
-      <div className="sticky top-0 z-40 px-6 pt-12 pb-2 max-w-[680px] mx-auto bg-canvas">
-        <div className="flex items-start justify-between">
-          <AnimatedTitle text={activeTab === 'saved' ? 'Saved' : 'History'} />
+      <div className="sticky top-0 z-40 bg-canvas">
+        <div className="px-6 pt-12 pb-2 max-w-[680px] mx-auto">
+          <div className="flex items-start justify-between">
+            <AnimatedTitle text={activeTab === 'saved' ? 'Saved' : 'History'} />
 
           {/* Header actions */}
           <div className="flex items-center gap-1 mt-1">
@@ -429,6 +430,7 @@ export function BookmarksView({ store }: BookmarksViewProps) {
             style={{ width: '50%', transform: activeTab === 'history' ? 'translateX(100%)' : 'translateX(0)' }}
           />
         </div>
+      </div>
       </div>
 
       {/* ─── Swipeable content ─── */}
